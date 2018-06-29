@@ -73,10 +73,11 @@ class Fadernet(object):
     def autoEncoder_loss(self, input_img, output_img):
         return tf.losses.mean_squared_error(labels=input_img, predictions=output_img)
 
+    def discriminator_loss(self, input_y, disc_out):
+        return tf.losses.sigmoid_cross_entropy(multi_class_labels=input_y, logits=disc_out)
 
+    def adversarial_loss(self, input_img, output_img, input_y, disc_out, lambda_e):
+        loss_ae = tf.losses.mean_squared_error(labels=input_img, predictions=output_img)
+        loss_ad = lambda_e * tf.losses.sigmoid_cross_entropy(multi_class_labels=input_y, logits=(1.0-disc_out))
 
-
-
-
-
-
+        return loss_ae - loss_ad
