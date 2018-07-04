@@ -177,7 +177,7 @@ class Fadernet(object):
 
         ae_train_op = tf.train.AdamOptimizer(0.002, beta1=0.5).minimize(ae_loss_op, var_list=dec_var)
         ds_train_op = tf.train.AdamOptimizer(0.002, beta1=0.5).minimize(dc_loss_op, var_list=disc_var)
-        en_train_op  = tf.train.AdamOptimizer(0.002, beta1=0.5).minimize(ad_loss_op, var_list=enc_var)
+        ad_train_op  = tf.train.AdamOptimizer(0.002, beta1=0.5).minimize(ad_loss_op, var_list=enc_var)
 
         '''
         ae_loss_summ = tf.summary.scalar("ae_loss", ae_loss_op)
@@ -214,10 +214,12 @@ class Fadernet(object):
                     itr_num = epoch * per_epoch_steps + itr
 
                     # omit summary_op and result
-                    ae_loss, ds_loss, ad_loss = sess.run([ae_train_op, ds_train_op, en_train_op],
+                    _, ae_loss, _, ds_loss, _, ad_loss = sess.run([ae_train_op, ae_loss_op, ds_train_op, ds_train_op, ad_train_op, ad_loss_op],
                                                                  feed_dict={self.x:imgs, self.input_attr:attrs, self.itr_num:[itr_num]})
 
-                    #writer.add_summary(result, self.itr_num)
+                    writer.add_summary(ae_loss, self.itr_num)
+                    writer.add_summary(ds_loss, self.itr_num)
+                    writer.add_summary(ad_loss, self.itr_num)
 
                     if(itr == per_epoch_steps - 1):
                         print("epoch:", epoch)
