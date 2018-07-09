@@ -140,28 +140,9 @@ class Fadernet(object):
         return img / 127.5 - 1.0
 
 
-    def load_batch(self, batch_num, img_path, mode="train", epoch_num=None):
+    def load_dataset(self, dataset_dir, num_images, epoch_size=None, mode='train'):
 
         if(mode == "train"):
-            temp = []
-            for i in range(self.batch_size):
-                temp.append(self.normalize_input(np.array(Image.open(img_path[i + self.batch_size * (batch_num)]),'f')))
-
-            return temp
-
-        elif (mode == "test"):
-            temp = []
-            for i in range(self.batch_size):
-                temp.append(self.normalize_input(np.array(Image.open(img_path[epoch_num]),'f')))
-
-            return temp
-
-    def load_dataset(self, dataset_dir, num_images, mode='train'):
-
-        if(mode == "train"):
-
-            self.train_attr = []
-
             imgs = glob.glob(dataset_dir + '/*.jpg')
 
             dictn = []
@@ -173,11 +154,7 @@ class Fadernet(object):
                     temp = temp.split()
                     dictn.append(1 if temp[20] == 1 else 0)
 
-
-            for i in range(num_images):
-                self.train_attr = dictn
-
-            return imgs
+            return imgs, dictn
 
         elif (mode == "test"):
             imgs = glob.glob(dataset_dir + '/*.jpg')
@@ -186,7 +163,38 @@ class Fadernet(object):
             return imgs
 
 
-    def train(self, dataset_dir="./train_data/celebA", result_dir="./result", load_ckp=True, epoch_num=10):
+    def load_dataset_per_epoch(self, imgs, train_attr, num_images, epoch_size=50000):
+        index = np.random.choice(np.arange(num_images), 50000, replace=False)
+        imgs_per_epoch = imgs[index]
+        attr_per_epoch = train_attr[index]
+
+        return imgs_per_epoch, attr_per_epoch
+
+    def load_batch(self, itr, imgs, mode="train", epoch_num=None):
+
+        if(mode == "train"):
+            temp = []
+            for i in range(self.batch_size):
+                if np.random.rand() < 0.5:
+                    temp.append(self.normalize_input(np.array(Image.open(imgs[i + self.batch_size * itr]),'f')))
+                else:
+                    temp.append(self.normalize_input(np.array(Image.open(imgs[i + self.batch_size * itr]),'f')[:, ::-1, :]))
+
+            return temp
+
+        elif (mode == "test"):
+            if epoch_num is None:
+                print("epoch_num is required when test")
+                sys.exit()
+
+            temp = []
+            for i in range(self.batch_size):
+                temp.append(self.normalize_input(np.array(Image.open(imgs[epoch_num]),'f')))
+
+            return temp
+
+
+    def train(self, dataset_dir="./train_data/celebA", result_dir="./result", load_ckp=True, epoch_num=1000, epoch_size=50000):
         ckp_dir = os.path.join(result_dir + "/checkpoints")
         tensorboard_dir = os.path.join(result_dir + "/tensorboard")
 
@@ -203,11 +211,10 @@ class Fadernet(object):
             os.makedirs(tensorboard_dir)
 
         num_train_images = len(glob.glob(dataset_dir + "/*.jpg"))
-        img_path = self.load_dataset(dataset_dir, num_train_images)
+        imgs, train_attr = self.load_dataset(dataset_dir, num_train_images, epoch_size)
 
         enc_var = [var for var in self.model_var if 'encoder' in var.name]
         dec_var = [var for var in self.model_var if 'decoder' in var.name]
-        #gen_var = [var for var in self.model_var if 'generator' in var.name]
         disc_var = [var for var in self.model_var if 'discriminator' in var.name]
 
         ae_loss_op = self.autoEncoder_loss(self.x, self.out_dec16)
@@ -217,12 +224,6 @@ class Fadernet(object):
         ae_train_op = tf.train.AdamOptimizer(0.002, beta1=0.5).minimize(ae_loss_op, var_list=dec_var)
         dc_train_op = tf.train.AdamOptimizer(0.002, beta1=0.5).minimize(dc_loss_op, var_list=disc_var)
         ad_train_op  = tf.train.AdamOptimizer(0.002, beta1=0.5).minimize(ad_loss_op, var_list=enc_var)
-
-        '''
-        ae_loss_summ = tf.summary.scalar("ae_loss", ae_loss_op)
-        dc_loss_summ = tf.summary.scalar("dc_loss", dc_loss_op)
-        ad_loss_summ = tf.summary.scalar("ad_loss", ad_loss_op)
-        '''
 
         init = tf.initialize_all_variables()
         saver = tf.train.Saver()
@@ -237,34 +238,30 @@ class Fadernet(object):
                 chkpt_fname = tf.train.latest_checkpoint(ckp_dir)
                 saver.restore(sess,chkpt_fname)
 
-            per_epoch_steps = int(num_train_images / self.batch_size)
+            per_epoch_steps = int(epoch_size / self.batch_size)
 
             t = time.time()
 
             for epoch in range(0, epoch_num):
                 print("epoch:", epoch)
+                imgs_per_epoch, attr_per_epoch = self.load_dataset_per_epoch(imgs, train_attr, num_train_images, epoch_size)
 
                 for itr in range(0, per_epoch_steps):
 
-                    imgs = self.load_batch(itr, img_path)
-                    attrs = self.train_attr[itr * self.batch_size:(itr + 1) * (self.batch_size)]
-                    attrs = np.reshape(attrs, (self.batch_size, 1))
+                    imgs_per_batch = self.load_batch(itr, imgs_per_epoch)
+                    attrs_per_batch = attr_per_epoch[itr * self.batch_size:(itr + 1) * (self.batch_size)]
+                    attrs_per_batch = np.reshape(attrs_per_batch, (self.batch_size, 1))
 
-                    #lambda_e = 0.0001 * (epoch * per_epoch_steps + itr) / (per_epoch_steps * epoch_num)
-                    lambda_e = 0.0001
                     itr_num = epoch * per_epoch_steps + itr
+                    if itr_num < 500000:
+                        lambda_e = 0.0001 * itr_num / 500000.0
+                    else:
+                        lambda_e = 0.0001
 
                     # omit summary_op and result
-                    _, ae_loss, _, ad_loss = sess.run([ae_train_op, ae_loss_op, ad_train_op, ad_loss_op], feed_dict={self.x:imgs, self.input_attr:attrs, self.lambda_e:lambda_e})
-                    #_, ad_loss = sess.run([ad_train_op, ad_loss_op], feed_dict={self.x:imgs, self.input_attr:attrs, self.lambda_e:lambda_e})
+                    _, ae_loss, _, ad_loss = sess.run([ae_train_op, ae_loss_op, ad_train_op, ad_loss_op], feed_dict={self.x:imgs_per_batch, self.input_attr:attrs_per_batch, self.lambda_e:lambda_e})
 
-                    _, ds_loss = sess.run([dc_train_op, dc_loss_op], feed_dict={self.x:imgs, self.input_attr:attrs, self.lambda_e:lambda_e})
-
-                    '''
-                    writer.add_summary(ae_loss, self.itr_num)
-                    writer.add_summary(ds_loss, self.itr_num)
-                    writer.add_summary(ad_loss, self.itr_num)
-                    '''
+                    _, ds_loss = sess.run([dc_train_op, dc_loss_op], feed_dict={self.x:imgs_per_batch, self.input_attr:attrs_per_batch, self.lambda_e:lambda_e})
 
                     if(itr == per_epoch_steps - 1):
                         print(time.time() - t)
@@ -278,7 +275,7 @@ class Fadernet(object):
         num_test_images = len(glob.glob(dataset_dir + "/*.jpg"))
         img_path = self.load_dataset(dataset_dir=dataset_dir, num_images=num_test_images, mode="test")
 
-        array = np.linspace(-1, 1, self.batch_size)
+        array = np.linspace(-2, 2, self.batch_size)
         test_attrs = np.reshape(array, (self.batch_size, 1))
 
         if not os.path.exists(result_dir + "/generated"):
@@ -298,7 +295,6 @@ class Fadernet(object):
                 imgs = self.load_batch(batch_num=0, mode="test", img_path=img_path, epoch_num=epoch)
 
                 temp_output = sess.run([self.out_dec16], feed_dict={self.x:imgs, self.input_attr:test_attrs})
-                print(np.shape(temp_output))
 
                 for outputs in temp_output:
                     for i, output in enumerate(outputs[:, :, :, :3]):
