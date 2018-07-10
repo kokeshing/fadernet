@@ -165,10 +165,10 @@ class Fadernet(object):
 
     def load_dataset_per_epoch(self, imgs, train_attr, num_images, epoch_size=50000):
         index = np.random.choice(np.arange(num_images), 50000, replace=False)
-        imgs_per_epoch = imgs[index]
-        attr_per_epoch = train_attr[index]
+        imgs_per_epoch = np.array(imgs)[index]
+        attr_per_epoch = np.array(train_attr)[index]
 
-        return imgs_per_epoch, attr_per_epoch
+        return imgs_per_epoch.tolist(), attr_per_epoch.tolist()
 
     def load_batch(self, itr, imgs, mode="train", epoch_num=None):
 
@@ -194,7 +194,7 @@ class Fadernet(object):
             return temp
 
 
-    def train(self, dataset_dir="./train_data/celebA", result_dir="./result", load_ckp=True, epoch_num=1000, epoch_size=50000):
+    def train(self, dataset_dir="./train_data/celebA", result_dir="./result", load_ckp=True, epoch_num=75, epoch_size=50000):
         ckp_dir = os.path.join(result_dir + "/checkpoints")
         tensorboard_dir = os.path.join(result_dir + "/tensorboard")
 
@@ -235,6 +235,7 @@ class Fadernet(object):
             writer.add_graph(sess.graph)
 
             if load_ckp:
+                print("load_pre_traind_weights")
                 chkpt_fname = tf.train.latest_checkpoint(ckp_dir)
                 saver.restore(sess,chkpt_fname)
 
@@ -253,10 +254,13 @@ class Fadernet(object):
                     attrs_per_batch = np.reshape(attrs_per_batch, (self.batch_size, 1))
 
                     itr_num = epoch * per_epoch_steps + itr
-                    if itr_num < 500000:
-                        lambda_e = 0.0001 * itr_num / 500000.0
-                    else:
+                    if load_ckp:
                         lambda_e = 0.0001
+                    else:
+                        if itr_num < 500000:
+                            lambda_e = 0.0001 * itr_num / 500000.0
+                        else:
+                            lambda_e = 0.0001
 
                     # omit summary_op and result
                     _, ae_loss, _, ad_loss = sess.run([ae_train_op, ae_loss_op, ad_train_op, ad_loss_op], feed_dict={self.x:imgs_per_batch, self.input_attr:attrs_per_batch, self.lambda_e:lambda_e})
@@ -275,7 +279,7 @@ class Fadernet(object):
         num_test_images = len(glob.glob(dataset_dir + "/*.jpg"))
         img_path = self.load_dataset(dataset_dir=dataset_dir, num_images=num_test_images, mode="test")
 
-        array = np.linspace(-2, 2, self.batch_size)
+        array = np.linspace(-10, 10, self.batch_size)
         test_attrs = np.reshape(array, (self.batch_size, 1))
 
         if not os.path.exists(result_dir + "/generated"):
@@ -292,7 +296,7 @@ class Fadernet(object):
             count = 0
 
             for epoch in range(0, num_test_images):
-                imgs = self.load_batch(batch_num=0, mode="test", img_path=img_path, epoch_num=epoch)
+                imgs = self.load_batch(0, mode="test", imgs=img_path, epoch_num=epoch)
 
                 temp_output = sess.run([self.out_dec16], feed_dict={self.x:imgs, self.input_attr:test_attrs})
 
